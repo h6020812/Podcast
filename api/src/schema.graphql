@@ -1,0 +1,155 @@
+type Query {
+  podcastSearch(searchTerm: String!): [PodcastSearchResult] @cypher(statement: 
+  """
+WITH  toString(timestamp()/1000) AS timestamp
+WITH {
+`User-Agent`: 'GRANDstackFM',
+`X-Auth-Date`: timestamp,
+`X-Auth-Key`: apoc.static.get('podcastkey'),
+`Authorization`:apoc.util.sha1([apoc.static.get('podcastkey')+apoc.static.get('podcastsecret')+timestamp])
+} AS headers
+CALL apoc.load.jsonParams('https://api.podcastindex.org/api/1.0/search/byterm?q=' + apoc.text.urlencode($searchTerm), headers, '', '') YIELD value
+UNWIND value.feeds AS feed
+RETURN {
+itunesId: toString(feed.itunesId),
+title: feed.title,
+description: feed.description,
+feedURL: feed.url,
+artwork: feed.artwork,
+categories: apoc.map.values(feed.categories, keys(feed.categories))
+  }
+  """
+  ),
+  currentUser: User @cypher(statement: 
+  """
+    MATCH (u:User {id: $auth.jwt.id})
+    RETURN u
+  """
+  ),
+  subscribedPodcasts: [Podcast] @cypher(statement:
+  """
+  MATCH (u:User {id: $auth.jwt.id})-[:SUBSCRIBES_TO]->(p:Podcast)
+  RETURN p
+  """
+  )
+  episodeFeed(first: Int = 10, offset: Int = 0): [Episode] @cypher(statement: 
+  """
+  MATCH (u:User {id: $auth.jwt.id})-[:SUBSCRIBES_TO]->(p:Podcast)-[:HAS_EPISODE]->(e:Episode)
+  RETURN e {.*, pubDate: toString(e.pubDate), podcast: p{.*}} ORDER BY e.pubDate DESC SKIP toInteger($offset) LIMIT toInteger($first)
+  """
+  )
+}
+
+type Episode {
+  id: ID!
+  pubDate: DateTime
+  summary: String
+  title: String
+  link: String
+  image: String
+  audio: String
+  podcast: Podcast @relationship(type: "HAS_EPISODE", direction: IN)
+}
+
+type User {
+  username: String
+  id: ID!
+  password: String! @private
+}
+
+type PodcastSearchResult @exclude {
+  itunesId: String
+  title: String
+  description: String
+  feedURL: String
+  artwork: String
+  categories: [String]
+}
+
+type AuthToken @exclude {
+  token: String!
+}
+
+type Podcast {
+  itunesId: ID!
+  title: String
+  link: String
+  feedURL: String
+  description: String
+  image: String
+}
+
+type Playlist @auth(rules: [{ operations: [READ], where: {subscribers: {id: "$jwt.id"}} }]) {
+  name: String!
+  episodes: [Episode] @relationship(type: "IN_PLAYLIST", direction: IN)
+  subscribers: [User] @relationship(type: "OWNS", direction: IN)
+}
+
+type Mutation {
+  signup(username: String!, password: String!): AuthToken
+  login(username: String!, password: String!): AuthToken
+  subscribeToPodcast(itunesId: String!): Podcast @cypher(statement:
+  """
+  // Fetch the podcast details from the podcast index
+  WITH  toString(timestamp()/1000) AS timestamp
+  WITH {
+  `User-Agent`: 'GRANDstackFM',
+  `X-Auth-Date`: timestamp,
+  `X-Auth-Key`: apoc.static.get('podcastkey'),
+  `Authorization`:apoc.util.sha1([apoc.static.get('podcastkey')+apoc.static.get('podcastsecret')+timestamp])
+  } AS headers
+  CALL apoc.load.jsonParams('https://api.podcastindex.org/api/1.0/podcasts/byitunesid?id=' + apoc.text.urlencode($itunesId), headers, '', '') YIELD value
+  WITH value.feed AS feed
+
+  // Create the (:User)-[:SUBSCRIBES_TO]->(:Podcast) path in the database
+  MATCH (u:User {id: $auth.jwt.id})
+  MERGE (p:Podcast {itunesId: $itunesId})
+  SET p.title       = feed.title,
+      p.link        = feed.link,
+      p.description = feed.description,
+      p.feedURL     = feed.url,
+      p.image       = feed.artwork
+  MERGE (u)-[:SUBSCRIBES_TO]->(p)
+  WITH p
+
+  // Parse the podcast XML feed and add its episodes to the database
+  // (:Podcast)-[:HAS_EPISODE]->(:Episode)
+  CALL apoc.load.xml(p.feedURL) YIELD value
+  UNWIND value._children AS foo
+  WITH p,[x in foo._children WHERE x._type = 'item'] AS episodes
+  UNWIND episodes AS episode
+  WITH p,[x in episode._children WHERE x._type = 'title'][0]._text AS title,
+         [x in episode._children WHERE x._type = 'description'][0]._text AS summary,
+         [x in episode._children WHERE x._type = 'link'][0]._text AS link,
+         [x in episode._children WHERE x._type = 'image'][0].href AS image,
+         [x in episode._children WHERE x._type = 'enclosure' AND x.type CONTAINS 'audio'][0].url AS audio,
+         [x in episode._children WHERE x._type = 'pubDate'][0]._text AS pubDate,
+         [x in episode._children WHERE x._type = 'guid'][0]._text AS guid
+  
+  MERGE (e: Episode {id: guid})
+  SET e.title = title,
+      e.summary = summary,
+      e.link = link,
+      e.image = image,
+      e.audio = audio,
+      e.pubDate = dateTime({epochMillis: apoc.date.parse(pubDate, 'ms', 'EEE, dd MMM yyyy HH:mm:ss zzz')})
+  MERGE (e)<-[:HAS_EPISODE]-(p)
+  RETURN p
+  """
+  )
+  createPlaylist(name: String!): Playlist @cypher(statement: 
+  """
+  MATCH (u:User {id: $auth.jwt.id})
+  MERGE (p:Playlist {name: $name})<-[:OWNS]-(u)
+  RETURN p
+  """
+  )
+  addEpisodeToPlaylist(name: String!, podcastId: ID!): Playlist @cypher(statement:
+  """
+  MATCH (u:User {id: $auth.jwt.id})-[:OWNS]->(p:Playlist {name: $name})
+  MATCH (e:Episode {id: $podcastId})
+  MERGE (e)-[:IN_PLAYLIST]->(p)
+  RETURN p
+  """
+  )
+}
