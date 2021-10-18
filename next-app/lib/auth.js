@@ -65,9 +65,18 @@ function useProvideAuth() {
         }
     }
 
+    const isSignedIn = () => {
+        if (authToken) {
+            return true
+        } else {
+            return false
+        }
+    }
+
     return {
         createApolloClient,
         signIn,
         signOut,
+        isSignedIn,
     }
 }
