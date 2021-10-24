@@ -2,7 +2,10 @@ import SignIn from "../components/SignIn";
 import Episode from "../components/Episode";
 import { useAuth } from "../lib/auth";
 import { gql, useQuery, useMutation } from "@apollo/client";
-import { Container, FormControl, Select, Button, Flex, VStack } from "@chakra-ui/react";
+import { Container, FormControl, Select, Button, Flex, VStack,
+    Popover, PopoverTrigger, PopoverContent, PopoverArrow,
+    PopoverHeader, PopoverCloseButton, PopoverBody, Input
+} from "@chakra-ui/react";
 import { useState } from "react";
 import { AddIcon } from "@chakra-ui/icons";
 
@@ -26,10 +29,20 @@ const GET_PLAYLISTS = gql`
 }
 `
 
+const CREATE_PLAYLIST = gql`
+    mutation createPlaylist($playlistName: String!) {
+        createPlaylist(name: $playlistName) {
+            name
+        }
+    }
+`
+
 export default function Playlists() {
     const { isSignedIn } = useAuth()
     const [selectedPlaylist, setSelectedPlaylist] = useState('')
+    const [newPlaylist, setNewPlaylist] = useState('')
     const { data } = useQuery(GET_PLAYLISTS)
+    const [createPlaylist] = useMutation(CREATE_PLAYLIST)
 
     const filteredPlaylist = data?.playlists?.filter((p) => {
         return p.name === selectedPlaylist
@@ -51,9 +64,53 @@ export default function Playlists() {
                                     )
                                 })}
                             </Select>
-                            <Button ml={4}>
-                                <AddIcon />
-                            </Button>
+                            <Popover>
+                                <PopoverTrigger>
+                                    <Button ml={4}>
+                                        <AddIcon />
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent>
+                                    <PopoverArrow />
+                                    <PopoverCloseButton />
+                                    <PopoverHeader>Create new playlist</PopoverHeader>
+                                    <PopoverBody>
+                                        <FormControl>
+                                            <Input type="text" onChange={(e) => setNewPlaylist(e.target.value)} />
+                                            <Button
+                                                mt={4}
+                                                onClick={() => {
+                                                    createPlaylist({
+                                                        variables: {
+                                                            playlistName: newPlaylist
+                                                        },
+                                                        update: (proxy) => {
+                                                            const data = proxy.readQuery({
+                                                                query: GET_PLAYLISTS,
+                                                            })
+
+                                                            proxy.writeQuery({
+                                                                query:GET_PLAYLISTS,
+                                                                data: {
+                                                                    playlists: [
+                                                                        ...data.playlists,
+                                                                        {
+                                                                            __typename: 'Playlist',
+                                                                            name: newPlaylist,
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            })
+                                                        }
+                                                    })
+                                                }}
+                                            >
+                                                Create
+                                            </Button>
+                                        </FormControl>
+                                    </PopoverBody>
+                                </PopoverContent>
+                            </Popover>
                         </Flex>
                     </FormControl>
                     <VStack mt={4} spacing={4}>
