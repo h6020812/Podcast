@@ -2,6 +2,7 @@ import { useLazyQuery, gql } from "@apollo/client";
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 import SignIn from "../components/SignIn";
+import Podcast from "../components/Podcast";
 import { 
     FormControl,
     FormLabel,
@@ -51,11 +52,11 @@ const Podcasts = () => {
                             </Button>
                         </Flex>
                     </FormControl>
-                    <ul>
+                    <VStack>
                         {data?.podcastSearch.map((p) => {
-                            return <li key={p.title}>{p.title}</li>
+                            return <Podcast podcast={p} />
                         })}
-                    </ul>
+                    </VStack>
                 </div>
             )}
         </Container>
